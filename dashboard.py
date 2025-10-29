@@ -1,240 +1,161 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import OneHotEncoder
-import warnings
+import io
+from contextlib import redirect_stdout
 
-# Ignorar avisos para uma interface mais limpa
-warnings.simplefilter(action='ignore', category=FutureWarning)
+# --- Importar a classe do arquivo local ---
+try:
+    # Importa a classe do arquivo algotithms.py
+    from classes.algotithms import AnalisadorCestaBasicaPro
+except ImportError:
+    st.error("Erro: Não foi possível encontrar o arquivo 'algotithms.py'. "
+             "Certifique-se de que ele está na mesma pasta que este script 'app.py'.")
+    st.stop()
+except Exception as e:
+    st.error(f"Erro ao importar 'algotithms.py': {e}. "
+             "Verifique se o arquivo da classe não contém erros.")
+    st.stop()
 
-# Configurações do Aplicativo
-ARQUIVO_DADOS = "./data/dados_limpos_ICB.xlsx"
+# Nome do arquivo de dados
+DATA_FILE = "dados_limpos_ICB.xlsx"
 
-HORIZONTE_PREVISAO_DIAS = 180  # 6 meses
-
-# Configuração da página do Streamlit
-st.set_page_config(layout="wide", page_title="Previsão de Preços e Otimização")
-
-@st.cache_data(show_spinner="Carregando e processando dados históricos...")
-def carregar_dados(arquivo):
-    """Carrega, limpa e renomeia os dados do XLSX."""
+# --- Carregamento da Classe (Cache) ---
+# @st.cache_resource garante que a classe seja carregada apenas uma vez.
+@st.cache_resource
+def carregar_analisador(filepath):
+    """
+    Carrega a classe AnalisadorCestaBasicaPro com o arquivo de dados.
+    """
     try:
-        df = pd.read_excel(arquivo)
-        
+        analisador = AnalisadorCestaBasicaPro(filepath)
+        if analisador.dados_brutos is None:
+            raise ValueError("Os dados não foram carregados corretamente pela classe.")
+        st.success("Analisador e dados carregados com sucesso!")
+        return analisador
     except FileNotFoundError:
-        st.error(f"ERRO: Arquivo '{arquivo}' não encontrado. Verifique se o nome está correto e se ele está na pasta 'data'.")
+        st.error(f"Erro: Arquivo de dados '{filepath}' não encontrado. "
+                 "Certifique-se de que ele está na mesma pasta do script.")
         return None
     except Exception as e:
-        st.error(f"ERRO ao ler o arquivo Excel: {e}")
-        st.info("Lembre-se de instalar o 'openpyxl'. Use: pip install openpyxl")
-        return None
-    
-    # Renomear colunas para o padrão do nosso script
-    colunas_map = {
-        'Data_Coleta': 'data_coleta',
-        'Estabelecimento': 'estabelecimento',
-        'Produto': 'produto',
-        'Preco': 'preco_produto'
-    }
-    df = df.rename(columns=colunas_map)
-    
-    colunas_necessarias = ['data_coleta', 'estabelecimento', 'produto', 'preco_produto']
-    if not all(col in df.columns for col in colunas_necessarias):
-        st.error(f"ERRO: O .xlsx deve conter as colunas: Data_Coleta, Estabelecimento, Produto, Preco")
+        st.error(f"Erro ao instanciar AnalisadorCestaBasicaPro: {e}. "
+                 "Verifique se a classe em 'algotithms.py' está correta e "
+                 "consegue ler arquivos CSV.")
         return None
 
-    # Limpeza de dados
-    df = df.dropna(subset=['preco_produto'])
-    df = df[pd.to_numeric(df['preco_produto'], errors='coerce').notnull()]
-    df['preco_produto'] = df['preco_produto'].astype(float)
-    
-    df['data_coleta'] = pd.to_datetime(df['data_coleta'])
-    df = df.sort_values(by='data_coleta')
-    return df
-
-def criar_features_temporais(df):
-    """Cria features de data para o modelo."""
-    df_feat = df.copy()
-    df_feat['mes'] = df_feat['data_coleta'].dt.month
-    df_feat['dia_da_semana'] = df_feat['data_coleta'].dt.dayofweek
-    df_feat['dia_do_ano'] = df_feat['data_coleta'].dt.dayofyear
-    df_feat['semana_do_ano'] = df_feat['data_coleta'].dt.isocalendar().week.astype(int)
-    return df_feat
-
-@st.cache_data(show_spinner="Treinando modelos e gerando previsões para 6 meses...")
-def treinar_e_prever_tudo(df_historico):
+# Extração de Filtros (Cache)
+@st.cache_data
+def extrair_filtros(_analisador):
     """
-    Função principal que treina o modelo com todos os dados históricos
-    e gera previsões para todos os produtos/estabelecimentos.
+    Extrai listas únicas para os filtros a partir dos dados brutos na classe.
     """
-    
-    df_features = criar_features_temporais(df_historico)
-    
-    features_categoricas = ['produto', 'estabelecimento']
-    features_numericas = ['mes', 'dia_da_semana', 'dia_do_ano', 'semana_do_ano']
-    target = 'preco_produto'
+    dados = _analisador.dados_brutos
+    classes = sorted([col for col in dados.columns if col.startswith('Classe_')])
+    estabelecimentos = sorted(dados['Estabelecimento'].unique().tolist())
+    produtos = sorted(dados['Produto'].unique().tolist())
+    return classes, estabelecimentos, produtos
 
-    encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
-    
-    X_cat = pd.DataFrame(
-        encoder.fit_transform(df_features[features_categoricas]),
-        columns=encoder.get_feature_names_out()
-    )
-    X_num = df_features[features_numericas].reset_index(drop=True)
-    X = pd.concat([X_num, X_cat], axis=1)
-    y = df_features[target].reset_index(drop=True)
+# Título e Carregamento
+st.set_page_config(layout="wide", page_title="Análise Cesta Básica")
+st.title("Dashboard de Análise de Preços 🛒")
 
-    model_final = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1, min_samples_leaf=5)
-    model_final.fit(X, y)
-    
-    data_inicio_futuro = df_historico['data_coleta'].max() + pd.DateOffset(days=1)
-    datas_futuras = pd.date_range(start=data_inicio_futuro, periods=HORIZONTE_PREVISAO_DIAS, freq='D')
-    
-    produtos_unicos = df_historico['produto'].unique()
-    estabelecimentos_unicos = df_historico['estabelecimento'].unique()
-    
-    df_futuro = pd.DataFrame(
-        list(pd.MultiIndex.from_product(
-            [datas_futuras, produtos_unicos, estabelecimentos_unicos], 
-            names=['data_coleta', 'produto', 'estabelecimento']
-        ).to_flat_index()),
-        columns=['data_coleta', 'produto', 'estabelecimento']
-    )
+analisador = carregar_analisador(DATA_FILE)
 
-    df_futuro_features = criar_features_temporais(df_futuro)
-    
-    X_cat_futuro = pd.DataFrame(
-        encoder.transform(df_futuro_features[['produto', 'estabelecimento']]),
-        columns=encoder.get_feature_names_out()
-    )
-    X_num_futuro = df_futuro_features[features_numericas].reset_index(drop=True)
-    X_futuro = pd.concat([X_num_futuro, X_cat_futuro], axis=1)
-    X_futuro = X_futuro.reindex(columns=X.columns, fill_value=0)
-    
-    previsoes = model_final.predict(X_futuro)
-    df_futuro['preco_previsto'] = previsoes
-    
-    return df_futuro
+# Se o carregamento falhar, para a execução do app
+if not analisador:
+    st.stop()
 
-# --- Interface do Dashboard ---
+# Extrai as listas para os filtros
+classes, estabelecimentos, produtos = extrair_filtros(analisador)
 
-st.title("Dashboard de Previsão de Preços e Otimização de Compras 🛒")
-st.markdown(f"Analisando dados históricos de `{ARQUIVO_DADOS}` e prevendo os próximos {HORIZONTE_PREVISAO_DIAS} dias.")
+# BARRA LATERAL (FILTROS)
+st.sidebar.title("Painel de Controle 🎛️")
+pagina = st.sidebar.radio(
+    "Selecione a Análise:",
+    ("Questão 1: Previsão de Preços", "Questão 2: Liderança de Preços", "Explorar Dados")
+)
+st.sidebar.markdown("---")
 
-# Carregar dados
-df_historico = carregar_dados(ARQUIVO_DADOS)
+# PÁGINA 1: QUESTÃO 1 (PREVISÃO)
+if pagina == "Questão 1: Previsão de Preços":
+    st.header("Questão 1: Previsão de Preços Futuros por Categoria")
+    st.info("Esta análise chama o método `analisar_previsao_preco_ml` da sua classe.")
 
-if df_historico is not None:
-    produtos_unicos = sorted(df_historico['produto'].unique())
+    # Filtros para Questão 1
+    st.sidebar.subheader("Filtros - Questão 1")
+    classe_q1 = st.sidebar.selectbox("Selecione a Classe:", classes)
     
-    # --- Barra Lateral (Controles) ---
-    st.sidebar.header("Definições de Análise")
+    st.sidebar.markdown("**Parâmetros do Algoritmo:**")
+    n_lags_q1 = st.sidebar.slider("Nº de Lags (semanas):", min_value=1, max_value=12, value=4)
+    test_size_q1 = st.sidebar.slider("Semanas para Teste:", min_value=4, max_value=26, value=12)
     
-    # Seletor da Questão 2A (Produto Único)
-    st.sidebar.subheader("Questão A: Produto Único")
-    produto_unico_selecionado = st.sidebar.selectbox(
-        "Selecione um Produto",
-        produtos_unicos,
-        index=0
-    )
-    
-    # Seletor da Questão 2B (Cesta Básica)
-    st.sidebar.subheader("Questão B: Cesta Básica")
-    default_cesta = list(produtos_unicos[:5]) if len(produtos_unicos) >= 5 else list(produtos_unicos)
-    produtos_cesta_selecionados = st.sidebar.multiselect(
-        "Selecione os produtos da Cesta",
-        produtos_unicos,
-        default=default_cesta
-    )
-    
-    # Botão para iniciar a análise
-    if st.sidebar.button("Gerar Previsões e Análises"):
-        
-        # 1. Chamar a função principal de ML (usará o cache se já tiver rodado)
-        df_previsoes = treinar_e_prever_tudo(df_historico)
-        
-        st.success("Previsões e análises concluídas!")
-    
-        col1, col2 = st.columns(2)
-  
-        with col1:
-            st.header(f"Análise: {produto_unico_selecionado}")
-            
-            # 1a. Recomendação de melhor local
-            st.subheader("Melhor Estabelecimento (Previsão)")
-            df_produto = df_previsoes[df_previsoes['produto'] == produto_unico_selecionado]
-            idx_melhor_local_produto = df_produto.groupby('data_coleta')['preco_previsto'].idxmin()
-            df_recomendacao_produto = df_produto.loc[idx_melhor_local_produto].copy()
-            df_recomendacao_produto['preco_previsto'] = df_recomendacao_produto['preco_previsto'].round(2)
-            st.dataframe(
-                df_recomendacao_produto[['data_coleta', 'estabelecimento', 'preco_previsto']].head(15),
-                use_container_width=True
-            )
-            
-            # 1b. Gráfico de Previsão de Preço
-            st.subheader("Previsão de Preço (Próximos 6 meses)")
-            fig_pred_prod = px.line(
-                df_produto, 
-                x='data_coleta', 
-                y='preco_previsto', 
-                color='estabelecimento', 
-                title=f"Previsão de Preço para {produto_unico_selecionado}"
-            )
-            st.plotly_chart(fig_pred_prod, use_container_width=True)
-            
-            # 1c. Gráfico Histórico de Preço
-            st.subheader("Histórico de Preço")
-            df_hist_prod = df_historico[df_historico['produto'] == produto_unico_selecionado]
-            fig_hist_prod = px.line(
-                df_hist_prod, 
-                x='data_coleta', 
-                y='preco_produto', 
-                color='estabelecimento', 
-                title=f"Histórico de Preço para {produto_unico_selecionado}"
-            )
-            st.plotly_chart(fig_hist_prod, use_container_width=True)
-
-        # --- Coluna 2: Análise da Cesta Básica ---
-        with col2:
-            st.header("Análise: Cesta Básica")
-            
-            if not produtos_cesta_selecionados:
-                st.warning("Por favor, selecione ao menos um produto para a cesta.")
-            else:
-                # 2a. Recomendação de melhor local para a cesta
-                st.subheader("Melhor Estabelecimento (Previsão)")
-                df_cesta = df_previsoes[df_previsoes['produto'].isin(produtos_cesta_selecionados)]
-                df_custo_cesta = df_cesta.groupby(
-                    ['data_coleta', 'estabelecimento']
-                )['preco_previsto'].sum().reset_index(name='custo_cesta_previsto')
-                
-                idx_melhor_local_cesta = df_custo_cesta.groupby('data_coleta')['custo_cesta_previsto'].idxmin()
-                df_recomendacao_cesta = df_custo_cesta.loc[idx_melhor_local_cesta].copy()
-                df_recomendacao_cesta['custo_cesta_previsto'] = df_recomendacao_cesta['custo_cesta_previsto'].round(2)
-                st.dataframe(
-                    df_recomendacao_cesta[['data_coleta', 'estabelecimento', 'custo_cesta_previsto']].head(15),
-                    use_container_width=True
+    # Botão de Execução
+    if st.button("Rodar Análise da Questão 1", type="primary"):
+        # Captura a saída (print) da classe
+        f = io.StringIO()
+        with st.spinner("Rodando análise... (chamando a classe)"):
+            with redirect_stdout(f):
+                analisador.analisar_previsao_preco_ml(
+                    categoria_col=classe_q1,
+                    freq='W-MON',  # Frequência definida na classe
+                    n_lags=n_lags_q1,
+                    test_size_semanas=test_size_q1
                 )
-                
-                # 2b. Gráfico de Previsão de Custo da Cesta
-                st.subheader("Previsão do Custo da Cesta (Próximos 6 meses)")
-                fig_pred_cesta = px.line(
-                    df_custo_cesta, 
-                    x='data_coleta', 
-                    y='custo_cesta_previsto', 
-                    color='estabelecimento', 
-                    title="Custo Previsto da Cesta por Estabelecimento"
+        resultados = f.getvalue()
+        
+        st.subheader("Resultados da Análise (Saída do Console)")
+        st.code(resultados, language=None) # Exibe o texto puro que seria impresso
+
+# PÁGINA 2: QUESTÃO 2 (LIDERANÇA)
+elif pagina == "Questão 2: Liderança de Preços":
+    st.header("Questão 2: Análise de Liderança de Preço")
+    st.info("Esta análise chama o método `analisar_lideranca_preco` da sua classe.")
+
+    # Filtros para Questão 2
+    st.sidebar.subheader("Filtros - Questão 2")
+    prod_q2 = st.sidebar.selectbox("Selecione o Produto:", produtos)
+    estab_A = st.sidebar.selectbox("Selecione o Mercado A:", estabelecimentos, index=0)
+    estab_B = st.sidebar.selectbox("Selecione o Mercado B:", estabelecimentos, index=1)
+    
+    st.sidebar.markdown("**Parâmetros do Algoritmo:**")
+    max_lag_q2 = st.sidebar.slider("Lag Máximo (semanas):", min_value=2, max_value=12, value=8)
+    
+    if estab_A == estab_B:
+        st.sidebar.error("Selecione dois estabelecimentos diferentes.")
+    elif st.button("Rodar Análise da Questão 2", type="primary"):
+        # Captura a saída (print) da classe
+        f = io.StringIO()
+        with st.spinner("Rodando análise... (chamando a classe)"):
+            with redirect_stdout(f):
+                analisador.analisar_lideranca_preco(
+                    produto_id=prod_q2,
+                    estab_A=estab_A,
+                    estab_B=estab_B,
+                    freq='W-MON', # Frequência definida na classe
+                    max_lag=max_lag_q2
                 )
-                st.plotly_chart(fig_pred_cesta, use_container_width=True)
-                
-                # 2c. Lista de produtos na cesta
-                st.subheader("Produtos na Cesta:")
-                st.info(", ".join(produtos_cesta_selecionados))
+        resultados = f.getvalue()
+        
+        st.subheader("Resultados da Análise (Saída do Console)")
+        st.code(resultados, language=None) # Exibe o texto puro
 
-    else:
-        st.info("Clique no botão 'Gerar Previsões e Análises' na barra lateral para iniciar.")
+# PÁGINA 3: EXPLORAR DADOS
+elif pagina == "Explorar Dados":
+    st.header("Exploração dos Dados Brutos")
+    st.info("Visualização dos dados contidos em `analisador.dados_brutos`.")
 
-else:
-    st.warning("Não foi possível carregar os dados. Verifique o console de erro.")
+    # Filtros de Exploração
+    st.sidebar.subheader("Filtros de Exploração")
+    estab_filt = st.sidebar.multiselect("Filtrar Estabelecimentos:", estabelecimentos, default=estabelecimentos)
+    classe_filt = st.sidebar.multiselect("Filtrar Classes:", classes, default=classes)
+    
+    # Lógica de filtragem
+    dados_filtrados = analisador.dados_brutos[
+        analisador.dados_brutos['Estabelecimento'].isin(estab_filt)
+    ]
+    if classes != classe_filt: # Só filtra se o usuário mudou a seleção
+        dados_filtrados = dados_filtrados[
+            dados_filtrados[classe_filt].any(axis=1)
+        ]
+    
+    st.metric("Linhas Filtradas", f"{len(dados_filtrados):,}")
+    st.dataframe(dados_filtrados)
