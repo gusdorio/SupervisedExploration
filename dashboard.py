@@ -17,7 +17,7 @@ except Exception as e:
     st.stop()
 
 # Nome do arquivo de dados
-DATA_FILE = "dados_limpos_ICB.xlsx"
+DATA_FILE = "./data/dados_limpos_ICB.xlsx"
 
 # --- Carregamento da Classe (Cache) ---
 # @st.cache_resource garante que a classe seja carregada apenas uma vez.

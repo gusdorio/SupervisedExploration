@@ -244,35 +244,4 @@ class AnalisadorCestaBasicaPro:
         print(f"Correlação mais forte no Lag = {max_corr_lag} semanas (Valor: {max_corr_val:.3f})")
         print(f"Interpretação: Mudanças em '{estab_A}' são vistas em '{estab_B}' {max_corr_lag} semana(s) depois.")
         
-        print("--- FIM QUESTÃO 2 ---")
-
-
-# --- Como Usar a Classe ---
-
-if __name__ == "__main__":
-    
-    arquivo = '../data/dados_limpos_ICB.xlsx'
-    
-    # 1. Inicializar o analisador
-    analisador_pro = AnalisadorCestaBasicaPro(arquivo)
-    
-    if analisador_pro.dados_brutos is not None:
-        
-        # 2. Executar a Questão 1
-        # Vamos prever 'Classe_Carnes Vermelhas'
-        analisador_pro.analisar_previsao_preco_ml(
-            categoria_col='Classe_Carnes Vermelhas',
-            freq='W-MON', # Frequência Semanal (iniciando na Segunda)
-            n_lags=4,     # Usar 4 semanas passadas para prever
-            test_size_semanas=12 # Testar nos últimos 3 meses
-        )
-        
-        # Vamos comparar o 'Produto' 0 (Arroz?) 
-        # entre o 'Estabelecimento' 12 e 23
-        analisador_pro.analisar_lideranca_preco(
-            produto_id='0',    
-            estab_A='12',        
-            estab_B='23',        
-            freq='W-MON',
-            max_lag=8            # Verificar até 8 semanas de atraso
-        )
+        print("FIM QUESTÃO 2")
