@@ -13,13 +13,13 @@ except ImportError:
              "Certifique-se de que ele está na pasta 'classes'.")
     st.stop()
 
-# --- Constantes de Arquivos ---
+# Constantes de Arquivos
 BASE_DATA_PATH = "./data"
 DATA_FILE = os.path.join(BASE_DATA_PATH, "dados_limpos_ICB.xlsx")
 MAPA_PRODUTO_FILE = os.path.join(BASE_DATA_PATH, "mapa_Produto.json")
 MAPA_ESTAB_FILE = os.path.join(BASE_DATA_PATH, "mapa_Estabelecimento.json")
 
-# MODIFICAÇÃO: Lista de Categorias para Q1 (baseado no CSV)
+# Lista de Categorias para Q1
 LISTA_CATEGORIAS = [
     "Classe_Carnes Vermelhas",
     "Classe_Grãos & Massas",
@@ -31,7 +31,7 @@ LISTA_CATEGORIAS = [
 # Configuração da Página
 st.set_page_config(layout="wide", page_title="Análise Cesta Básica")
 
-# --- Funções de Carregamento (com Caching) ---
+# Funções de Carregamento (com Caching)
 
 @st.cache_data
 def carregar_mapas():
@@ -92,7 +92,7 @@ def load_data(file_path):
         
     return df
 
-# --- Funções de Plotagem (Sem Alterações) ---
+# Funções de Plotagem 
 
 def plot_previsao_q1(df_plot):
     fig = px.line(df_plot, title="Comparação: Preço Real vs. Previsão do Modelo (em semanas de teste)",
@@ -125,14 +125,12 @@ def plot_ccf_q2(ccf_df):
     fig.update_layout(hovermode="x unified")
     return fig
 
-# --- Funções de Análise (Backend) ---
+# Funções de Análise (Backend) 
 
 @st.cache_data
-# MODIFICAÇÃO: Recebe 'nome_categoria' (string)
 def rodar_analise_q1(_analisador, nome_categoria, n_semanas):
     """Executa a análise da Questão 1 (Previsão)."""
     try:
-        # MODIFICAÇÃO: Chama a função 'analisar_previsao_categoria'
         df_plot, mse, mae, mape, erro = _analisador.analisar_previsao_categoria(nome_categoria, n_semanas)
         
         if erro:
@@ -175,7 +173,7 @@ except Exception as e:
     st.info(f"Verifique se o arquivo '{DATA_FILE}' existe e está correto.")
     st.stop()
 
-# --- BARRA LATERAL (FILTROS) ---
+# BARRA LATERAL (FILTROS)
 
 st.sidebar.title("Painel de Controle")
 st.sidebar.info("Navegue pelas análises usando os botões abaixo.")
@@ -186,26 +184,75 @@ pagina = st.sidebar.radio(
     label_visibility="collapsed"
 )
 
-# --- PÁGINA 1: VISÃO GERAL ---
+# PÁGINA 1: VISÃO GERAL (MODIFICADA)
 if pagina == "Visão Geral":
-    st.title("Visão Geral da Cesta Básica")
-    st.write("Visualização dos dados limpos e mapeados.")
+    st.title("Visão Geral e Estatísticas dos Dados")
+    st.write("Uma análise exploratória de como os dados limpos se comportam.")
     
+    # Carrega os dados brutos (limpos)
     df_raw = load_data(DATA_FILE)
     
-    st.subheader("Visualização dos Dados Limpos (Amostra)")
-    st.dataframe(df_raw.head())
+    # 1. Métricas Principais
+    st.subheader("Métricas Principais da Base de Dados")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total de Coletas (Registros)", f"{len(df_raw):,}")
+    col2.metric("Produtos Únicos Mapeados", f"{df_raw['Produto'].nunique()}")
+    col3.metric("Mercados Únicos Mapeados", f"{df_raw['Estabelecimento'].nunique()}")
     
-    st.info(f"Total de {len(df_raw)} registros carregados.")
+    st.markdown("---")
+
+    # 2. Estatísticas Descritivas
+    st.subheader("Estatísticas Descritivas (Colunas Numéricas)")
+    st.write("Análise das colunas de Preço, Quantidade e Preço por Kilo/Unidade (PPK).")
+    numeric_cols = ['PPK', 'Preco', 'Quantidade']
+    st.dataframe(df_raw[numeric_cols].describe())
+
+    st.markdown("---")
+    
+    col1_vis, col2_vis = st.columns(2)
+    
+    with col1_vis:
+        # 3. Distribuição de Preços (PPK)
+        st.subheader("Distribuição de Preço por Kilo/Unidade (PPK)")
+        st.write("Mostra a frequência dos diferentes valores de PPK.")
+        
+        # Filtro para outliers (apenas para visualização, para não esticar o gráfico)
+        ppk_filter = df_raw['PPK'] < df_raw['PPK'].quantile(0.99)
+        
+        fig_hist = px.histogram(df_raw[ppk_filter], x='PPK', nbins=50,
+                                title='Distribuição de Preços (PPK) - Excluindo 1% superior')
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+    with col2_vis:
+        # 4. Contagem por Categoria
+        st.subheader("Contagem de Registros por Categoria")
+        st.write("Número de coletas de produtos em cada categoria principal.")
+        
+        # Soma as colunas booleanas de Categoria
+        category_counts = df_raw[LISTA_CATEGORIAS].sum().reset_index()
+        category_counts.columns = ['Categoria', 'Contagem']
+        
+        fig_bar = px.bar(category_counts, 
+                         x='Categoria', 
+                         y='Contagem',
+                         title='Contagem de Registros por Categoria',
+                         color='Categoria')
+        fig_bar.update_xaxes(tickangle=45) # Inclina os labels
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    st.markdown("---")
+
+    # 5. Amostra dos Dados (Como estava antes)
+    st.subheader("Amostra dos Dados Mapeados")
+    st.write("Visualização dos IDs numéricos mapeados de volta para seus nomes (se disponível).")
     
     df_display = df_raw.copy()
     df_display['Produto'] = df_display['Produto'].map(mapa_id_para_produto).fillna('ID Desconhecido')
     df_display['Estabelecimento'] = df_display['Estabelecimento'].map(mapa_id_para_estab).fillna('ID Desconhecido')
     
-    st.subheader("Dados Mapeados (Amostra)")
     st.dataframe(df_display.head())
     
-# --- PÁGINA 2: QUESTÃO 1 (Previsão) ---
+# PÁGINA 2: QUESTÃO 1 (Previsão) 
 elif pagina == "Questão 1: Previsão de Preços":
     st.title("Questão 1: Previsão de Preços Futuros por Categoria")
     st.write("""
@@ -217,10 +264,9 @@ elif pagina == "Questão 1: Previsão de Preços":
     # Filtros Q1
     st.sidebar.subheader("Filtros - Questão 1")
     
-    # MODIFICAÇÃO: Filtro usa a LISTA_CATEGORIAS
     categoria_nome_q1 = st.sidebar.selectbox(
         "Selecione a Categoria:",
-        LISTA_CATEGORIAS, # Usa a lista de strings
+        LISTA_CATEGORIAS, 
         key='cat_q1',
         help="Análise do preço médio de todos os itens desta categoria."
     )
@@ -228,21 +274,18 @@ elif pagina == "Questão 1: Previsão de Preços":
     n_semanas_q1 = st.sidebar.slider("Semanas para Previsão (Teste):", 4, 24, 8, key='sem_q1')
 
     if st.sidebar.button("Rodar Previsão", type="primary", key='btn_q1'):
-        # MODIFICAÇÃO: Passa o 'nome_categoria' (string) para a análise
         resultados_q1 = rodar_analise_q1(analisador, categoria_nome_q1, n_semanas_q1)
         st.session_state.resultados_q1 = resultados_q1
-        st.session_state.categoria_nome_q1 = categoria_nome_q1 # Salva o nome da categoria
+        st.session_state.categoria_nome_q1 = categoria_nome_q1 
     
     # Exibição de Resultados Q1
     if 'resultados_q1' in st.session_state:
         resultados_q1 = st.session_state.resultados_q1
-        # MODIFICAÇÃO: Recupera o nome da categoria
         categoria_nome_q1 = st.session_state.categoria_nome_q1 
 
         if resultados_q1['erro']:
             st.error(resultados_q1['erro'])
         else:
-            # MODIFICAÇÃO: Exibe o nome da categoria
             st.subheader(f"Resultados da Previsão para: {categoria_nome_q1}")
             
             fig_q1 = plot_previsao_q1(resultados_q1['df_plot'])
@@ -263,7 +306,7 @@ elif pagina == "Questão 1: Previsão de Preços":
             )
 
 
-# --- PÁGINA 3: QUESTÃO 2 (Liderança) ---
+# PÁGINA 3: QUESTÃO 2 (Liderança)
 elif pagina == "Questão 2: Liderança de Preços":
     st.title("Questão 2: Análise de Liderança de Preços")
     st.write("""
@@ -273,7 +316,7 @@ elif pagina == "Questão 2: Liderança de Preços":
     2.  **Cross-Correlation (CCF):** Mede a semelhança entre as duas séries em diferentes "atrasos" (lags), mostrando quem se move primeiro e por quantas semanas.
     """)
 
-    # Filtros Q2 (Sem alteração, usa mapa_produto)
+    # Filtros Q2 
     st.sidebar.subheader("Filtros - Questão 2")
     
     nomes_produtos_ordenados_q2 = sorted(mapa_produto.keys())

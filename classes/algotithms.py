@@ -50,7 +50,7 @@ class AnalisadorCestaBasicaPro:
             self.categorias = [col for col in self.dados_brutos.columns if col.startswith('Classe_')]
             print(f"Categorias identificadas para Q1: {self.categorias}")
 
-    # --- MÉTODOS AUXILIARES (internos) ---
+    # MÉTODOS AUXILIARES (internos)
 
     def _criar_features_lags(self, serie, n_lags=4):
         df = pd.DataFrame(serie)
@@ -78,9 +78,8 @@ class AnalisadorCestaBasicaPro:
         else:
             return serie, f"Sim (p={p_valor:.3f})"
 
-    # --- MÉTODOS DE ANÁLISE (Dashboard - Questão 1) ---
+    # MÉTODOS DE ANÁLISE (Dashboard - Questão 1)
 
-    # MODIFICAÇÃO: Renomeado de 'analisar_previsao_produto' para 'analisar_previsao_categoria'
     def analisar_previsao_categoria(self, nome_categoria, test_size_semanas=12, freq='W-MON', n_lags=4):
         """
         Função MODIFICADA para Questão 1 (alinhada ao Relatório).
@@ -93,7 +92,7 @@ class AnalisadorCestaBasicaPro:
         if nome_categoria not in self.categorias:
              return None, None, None, None, f"Categoria '{nome_categoria}' não encontrada nos dados."
 
-        # 1. MODIFICAÇÃO: Filtrar pela COLUNA de Categoria
+        # 1. Filtrar pela COLUNA de Categoria
         dados_cat = self.dados_brutos[self.dados_brutos[nome_categoria] == True]
         
         if dados_cat.empty:
@@ -136,7 +135,7 @@ class AnalisadorCestaBasicaPro:
         return df_plot, mse, mae, mape, None # erro é None
 
 
-    # --- MÉTODOS DE ANÁLISE (Dashboard - Questão 2) ---
+    # MÉTODOS DE ANÁLISE (Dashboard - Questão 2)
 
     def analisar_lideranca_preco(self, produto_id, estab_A_id, estab_B_id, max_lag=8, freq='W-MON'):
         """
