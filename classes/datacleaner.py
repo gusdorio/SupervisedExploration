@@ -28,6 +28,7 @@ class DataCleaner:
         self.categorical_cols = []
         self.datetime_cols = []
         self.cleaning_report = {}
+        self.label_mappings = {} # <-- MODIFICAÇÃO 1: Inicializa o atributo
         
     def analyze_data(self) -> Dict:
         """
@@ -278,6 +279,9 @@ class DataCleaner:
                     le = LabelEncoder()
                     self.df[col] = le.fit_transform(self.df[col].astype(str))
                     encoded_info[col] = f'label ({n_categories} categorias)'
+                    
+                    # <-- MODIFICAÇÃO 2: Salva o mapa {Nome: ID}
+                    self.label_mappings[col] = {name: int(idx) for idx, name in enumerate(le.classes_)}
             
             elif method == 'onehot':
                 dummies = pd.get_dummies(self.df[col], prefix=col, drop_first=True)
@@ -289,6 +293,9 @@ class DataCleaner:
                 le = LabelEncoder()
                 self.df[col] = le.fit_transform(self.df[col].astype(str))
                 encoded_info[col] = 'label'
+                
+                # <-- MODIFICAÇÃO 3: Salva o mapa {Nome: ID}
+                self.label_mappings[col] = {name: int(idx) for idx, name in enumerate(le.classes_)}
         
         if encoded_info:
             print(f"   Codificadas {len(encoded_info)} colunas")

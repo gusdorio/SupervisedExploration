@@ -2,22 +2,95 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import json 
+import os 
 
-# Importar a classe modificada
+# Importar a classe
 try:
     from classes.algotithms import AnalisadorCestaBasicaPro
 except ImportError:
-    st.error("Erro: Não foi possível encontrar o arquivo 'algotithms_plotly.py'. "
-             "Certifique-se de que ele está salvo na mesma pasta que este script 'app.py'.")
+    st.error("Erro: Não foi possível encontrar o arquivo 'algotithms.py'. "
+             "Certifique-se de que ele está na pasta 'classes'.")
     st.stop()
 
-# Nome do arquivo de dados
-DATA_FILE = "./data/dados_limpos_ICB.xlsx"
+# --- Constantes de Arquivos ---
+# Caminho base para os dados (considerando que o dashboard.py está em SupervisedExploration)
+BASE_DATA_PATH = "./data"
+DATA_FILE = os.path.join(BASE_DATA_PATH, "dados_limpos_ICB.xlsx")
+MAPA_PRODUTO_FILE = os.path.join(BASE_DATA_PATH, "mapa_Produto.json")
+MAPA_ESTAB_FILE = os.path.join(BASE_DATA_PATH, "mapa_Estabelecimento.json")
 
 # Configuração da Página
 st.set_page_config(layout="wide", page_title="Análise Cesta Básica")
 
-# Funções de Plotagem
+# --- Funções de Carregamento (com Caching) ---
+
+@st.cache_data
+def carregar_mapas():
+    """Carrega os mapas de ID para Nome dos arquivos JSON."""
+    try:
+        with open(MAPA_PRODUTO_FILE, 'r', encoding='utf-8') as f:
+            mapa_produto = json.load(f)  # {'Arroz': 0, 'Açúcar': 1, ...}
+        
+        with open(MAPA_ESTAB_FILE, 'r', encoding='utf-8') as f:
+            mapa_estab = json.load(f)    # {'SUP-0': 13, 'SUP-1': 14, ...}
+            
+        # Criar mapas inversos (ID -> Nome) para exibir resultados
+        mapa_id_para_produto = {v: k for k, v in mapa_produto.items()}
+        mapa_id_para_estab = {v: k for k, v in mapa_estab.items()}
+
+        return mapa_produto, mapa_estab, mapa_id_para_produto, mapa_id_para_estab
+        
+    except FileNotFoundError:
+        st.error(f"Erro Crítico: Arquivos de mapeamento JSON não encontrados.")
+        st.error(f"Verifique se '{MAPA_PRODUTO_FILE}' e '{MAPA_ESTAB_FILE}' existem.")
+        st.info("Você precisa executar o notebook 'statistical_analysis.ipynb' primeiro para gerar esses arquivos.")
+        st.stop()
+    except json.JSONDecodeError:
+        st.error("Erro ao ler os arquivos JSON. Verifique se eles não estão corrompidos.")
+        st.stop()
+
+@st.cache_data
+def load_data(file_path):
+    """Carrega e pré-processa os dados limpos."""
+    try:
+        # Usando 'openpyxl' explicitamente para .xlsx
+        df = pd.read_excel(file_path, sheet_name="Sheet1", engine='openpyxl')
+    except FileNotFoundError:
+        st.error(f"Erro: Arquivo de dados '{file_path}' não encontrado.")
+        st.info("Verifique se o arquivo 'dados_limpos_ICB.xlsx' está na pasta 'data'.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo Excel: {e}")
+        st.info("O arquivo pode estar corrompido ou em um formato inesperado.")
+        st.stop()
+
+    if df.empty:
+        st.error("O arquivo de dados está vazio.")
+        st.stop()
+        
+    # Converte colunas de data (se existirem e não forem index)
+    if 'Data' in df.columns:
+        try:
+            df['Data'] = pd.to_datetime(df['Data'])
+            df = df.set_index('Data')
+        except Exception as e:
+            st.warning(f"Não foi possível processar a coluna 'Data': {e}")
+            
+    # Garantir que colunas chave são inteiros (como no notebook)
+    try:
+        cols_to_int = ['Produto', 'Estabelecimento']
+        for col in cols_to_int:
+            if col in df.columns:
+                df[col] = df[col].astype(int)
+    except Exception as e:
+        st.error(f"Erro ao converter colunas para inteiro: {e}")
+        st.info("O arquivo 'dados_limpos_ICB.xlsx' pode não o formato esperado.")
+        st.stop()
+        
+    return df
+
+# --- Funções de Plotagem (Sem Alterações) ---
 
 def plot_previsao_q1(df_plot):
     """Cria um gráfico Plotly comparando Real vs. Previsto."""
@@ -27,203 +100,257 @@ def plot_previsao_q1(df_plot):
     fig.update_layout(hovermode="x unified")
     return fig
 
-def plot_series_q2(df_plot, estab_A, estab_B):
+def plot_series_q2(df_plot, estab_A_nome, estab_B_nome):
     """Cria um gráfico Plotly comparando as duas séries de preço."""
-    fig = px.line(df_plot, y=[estab_A, estab_B], 
-                  title=f"Preço Médio Semanal: {estab_A} vs. {estab_B}",
-                  labels={'value': 'Preço (PPK)', 'index': 'Data', 'variable': 'Estabelecimento'})
+    # O df_plot já deve vir com colunas renomeadas para os Nomes
+    fig = px.line(df_plot, title=f"Série de Preços: {estab_A_nome} vs. {estab_B_nome}",
+                  labels={'value': 'Preço (PPK)', 'index': 'Semana', 'variable': 'Mercado'})
     fig.update_traces(line=dict(width=2.5))
+    fig.update_layout(hovermode="x unified", legend_title="Mercado")
+    return fig
+
+def plot_ccf_q2(ccf_df):
+    """Cria um gráfico Plotly da Cross-Correlation Function (CCF)."""
+    fig = px.bar(ccf_df, x='Lag', y='CCF', title="Análise de Atraso (Cross-Correlation)",
+                 labels={'Lag': 'Atraso (Semanas)', 'CCF': 'Correlação'})
+    
+    # Adiciona linha do lag mais forte
+    max_lag = ccf_df.loc[ccf_df['CCF'].abs().idxmax()]
+    
+    fig.add_shape(type="line",
+                  x0=max_lag['Lag'], y0=0, x1=max_lag['Lag'], y1=max_lag['CCF'],
+                  line=dict(color="red", width=2, dash="dash"))
+    
+    fig.add_annotation(x=max_lag['Lag'], y=max_lag['CCF'],
+                       text=f"Max. Correlação em {max_lag['Lag']} semanas",
+                       showarrow=True, arrowhead=1, ax=20, ay=-30)
+    
     fig.update_layout(hovermode="x unified")
     return fig
 
-def plot_ccf_q2(df_plot):
-    """Cria um gráfico de barras Plotly para a Correlação Cruzada."""
-    df_plot_reset = df_plot.reset_index() # Plotly bar prefere colunas
-    fig = px.bar(df_plot_reset, x='Lag (Semanas)', y='Correlação',
-                 title="Correlação Cruzada (Qual mercado se move primeiro?)",
-                 color='Correlação',
-                 color_continuous_scale='RdBu_r',
-                 hover_data={'Lag (Semanas)': True, 'Correlação': ':.3f'})
-    fig.update_layout(coloraxis_showscale=False)
-    return fig
+# Funções de Análise
 
-def plot_vis_geral_linhas(dados, classe_selecionada):
-    """Cria um gráfico Plotly da tendência de preço para uma classe."""
-    dados_classe = dados[dados[classe_selecionada] == True]
-    ppk_medio_semanal = dados_classe['PPK'].resample('W-MON').mean().fillna(method='ffill').to_frame()
-    
-    fig = px.line(ppk_medio_semanal, y='PPK', 
-                  title=f"Preço Médio Semanal para {classe_selecionada.replace('Classe_', '')}",
-                  labels={'PPK': 'Preço Médio (PPK)', 'Data_Coleta': 'Data'})
-    fig.update_traces(line=dict(color='#1E90FF', width=3))
-    return fig
-    
-def plot_vis_geral_box(dados, classe_selecionada):
-    """Cria um boxplot Plotly de preços por estabelecimento."""
-    dados_classe = dados[dados[classe_selecionada] == True]
-    
-    fig = px.box(dados_classe, x='Estabelecimento', y='PPK',
-                 title=f"Distribuição de Preços por Estabelecimento (para {classe_selecionada.replace('Classe_', '')})",
-                 color='Estabelecimento',
-                 labels={'PPK': 'Preço Médio (PPK)', 'Estabelecimento': 'Mercado'})
-    fig.update_layout(showlegend=False)
-    return fig
-
-
-# Carregamento da Classe (Cache)
-@st.cache_resource
-def carregar_analisador(filepath):
+@st.cache_data
+def rodar_analise_q1(_analisador, produto_id, n_semanas):
+    """Executa a análise da Questão 1 (Previsão)."""
     try:
-        analisador = AnalisadorCestaBasicaPro(filepath)
-        if analisador.dados_brutos is None:
-            return None
-        return analisador
+        # CORREÇÃO: Agora recebe 4 valores (df_plot, mse, mae, erro)
+        df_plot, mse, mae, erro = _analisador.analisar_previsao_produto(produto_id, n_semanas)
+        
+        # Se o algoritmo retornou um erro lógico (ex: "Sem dados")
+        if erro:
+            return {'df_plot': None, 'mse': None, 'mae': None, 'erro': erro}
+        
+        # Se foi sucesso
+        return {'df_plot': df_plot, 'mse': mse, 'mae': mae, 'erro': None}
+
     except Exception as e:
-        st.error(f"Erro ao carregar o analisador: {e}")
-        return None
-
-# Cache das Análises
-@st.cache_data
-def rodar_analise_q1(_analisador, classe, n_lags, test_size):
-    return _analisador.analisar_previsao_preco_ml(
-        categoria_col=classe,
-        n_lags=n_lags,
-        test_size_semanas=test_size
-    )
+        # Se o Python deu um erro (um bug inesperado)
+        return {'df_plot': None, 'mse': None, 'mae': None, 'erro': f"Erro inesperado na análise Q1: {e}"}
 
 @st.cache_data
-def rodar_analise_q2(_analisador, produto, estab_A, estab_B, max_lag):
-    return _analisador.analisar_lideranca_preco(
-        produto_id=produto,
-        estab_A=estab_A,
-        estab_B=estab_B,
-        max_lag=max_lag
-    )
+def rodar_analise_q2(_analisador, produto_id, estab_a_id, estab_b_id, max_lag):
+    """Executa a análise da Questão 2 (Liderança de Preço)."""
+    try:
+        dados_pares_plot, ccf_df, p_A_causa_B, p_B_causa_A, erro = \
+            _analisador.analisar_lideranca_preco(produto_id, estab_a_id, estab_b_id, max_lag)
+        
+        if erro:
+            return {'erro': erro}
+            
+        return {
+            'dados_pares_plot': dados_pares_plot,
+            'ccf_df': ccf_df,
+            'p_A_causa_B': p_A_causa_B,
+            'p_B_causa_A': p_B_causa_A,
+            'erro': None
+        }
+    except Exception as e:
+        return {'erro': f"Erro inesperado na análise Q2: {e}"}
 
-# INÍCIO DO APP
-st.title("Dashboard de Análise de Preços da Cesta Básica 🛒")
+# INÍCIO DO APLICATIVO
 
-analisador = carregar_analisador(DATA_FILE)
+# Carregar Mapas e Dados
+mapa_produto, mapa_estab, mapa_id_para_produto, mapa_id_para_estab = carregar_mapas()
 
-if not analisador:
-    st.error(f"Não foi possível carregar o arquivo de dados '{DATA_FILE}'.")
+try:
+    analisador = AnalisadorCestaBasicaPro(DATA_FILE)
+except Exception as e:
+    st.error(f"Erro ao inicializar o Analisador: {e}")
+    st.info(f"Verifique se o arquivo '{DATA_FILE}' existe e está correto.")
     st.stop()
 
-# BARRA LATERAL (FILTROS) 
+# BARRA LATERAL (FILTROS)
+
 st.sidebar.title("Painel de Controle")
+st.sidebar.info("Navegue pelas análises usando os botões abaixo.")
+
 pagina = st.sidebar.radio(
     "Selecione a Análise:",
-    ("Visão Geral", "Questão 1: Previsão de Preços", "Questão 2: Liderança de Preços")
+    ("Visão Geral", "Questão 1: Previsão de Preços", "Questão 2: Liderança de Preços"),
+    label_visibility="collapsed"
 )
-st.sidebar.markdown("---")
 
 # PÁGINA 1: VISÃO GERAL
 if pagina == "Visão Geral":
-    st.header("Visão Geral e Exploração dos Dados")
-    st.info("Uma visão interativa dos dados brutos para o público geral.")
+    st.title("Visão Geral da Cesta Básica")
+    st.write("Visualização dos dados limpos e mapeados.")
     
-    # Filtro para a página
-    st.sidebar.subheader("Filtros - Visão Geral")
-    classe_vis = st.sidebar.selectbox("Selecione a Classe para explorar:", analisador.classes)
+    df_raw = load_data(DATA_FILE)
     
-    if classe_vis:
-        st.plotly_chart(plot_vis_geral_linhas(analisador.dados_brutos, classe_vis), use_container_width=True)
-        st.plotly_chart(plot_vis_geral_box(analisador.dados_brutos, classe_vis), use_container_width=True)
-        
-    st.subheader("Dados Brutos")
-    with st.expander("Clique para ver os dados completos"):
-        st.dataframe(analisador.dados_brutos)
-
-# PÁGINA 2: QUESTÃO 1 (PREVISÃO)
+    st.subheader("Visualização dos Dados Limpos (Amostra)")
+    st.dataframe(df_raw.head())
+    
+    st.info(f"Total de {len(df_raw)} registros carregados.")
+    
+    # Mapear IDs para Nomes para exibição
+    df_display = df_raw.copy()
+    df_display['Produto'] = df_display['Produto'].map(mapa_id_para_produto).fillna('ID Desconhecido')
+    df_display['Estabelecimento'] = df_display['Estabelecimento'].map(mapa_id_para_estab).fillna('ID Desconhecido')
+    
+    st.subheader("Dados Mapeados (Amostra)")
+    st.dataframe(df_display.head())
+    
+# PÁGINA 2: QUESTÃO 1 (Previsão)
 elif pagina == "Questão 1: Previsão de Preços":
-    st.header("Questão 1: O modelo consegue prever o preço futuro?")
-    st.info("""
-    **Objetivo:** Testar se um modelo de Machine Learning consegue prever o preço
-    médio de uma categoria para as próximas semanas.
+    st.title("Questão 1: Previsão de Preços Futuros")
+    st.write("""
+    Esta análise utiliza um modelo de Machine Learning (Random Forest Regressor) treinado com
+    features de atraso (lag) para prever o preço de um produto nas próximas semanas.
     """)
 
     # Filtros Q1
     st.sidebar.subheader("Filtros - Questão 1")
-    classe_q1 = st.sidebar.selectbox("Selecione a Classe:", analisador.classes)
-    n_lags_q1 = st.sidebar.slider("Semanas de 'Memória' (Lags):", 1, 12, 4)
-    test_size_q1 = st.sidebar.slider("Semanas para Teste:", 4, 26, 12)
     
-    if st.sidebar.button("Rodar Análise de Previsão", type="primary"):
-        resultados_q1 = rodar_analise_q1(analisador, classe_q1, n_lags_q1, test_size_q1)
-        
+    # Obter nomes ordenados dos produtos
+    nomes_produtos_ordenados = sorted(mapa_produto.keys())
+    
+    produto_nome_q1 = st.sidebar.selectbox(
+        "Selecione o Produto:",
+        nomes_produtos_ordenados,
+        key='prod_q1'
+    )
+    # Obter o ID do produto selecionado
+    prod_q1_id = mapa_produto[produto_nome_q1]
+    
+    n_semanas_q1 = st.sidebar.slider("Semanas para Previsão (Teste):", 4, 24, 8, key='sem_q1')
+
+    if st.sidebar.button("Rodar Previsão", type="primary", key='btn_q1'):
+        # Passar o ID numérico para a função de análise
+        resultados_q1 = rodar_analise_q1(analisador, prod_q1_id, n_semanas_q1)
+        st.session_state.resultados_q1 = resultados_q1
+        st.session_state.produto_nome_q1 = produto_nome_q1 # Salvar o nome
+    
+    # Exibição de Resultados Q1
+    if 'resultados_q1' in st.session_state:
+        resultados_q1 = st.session_state.resultados_q1
+        produto_nome_q1 = st.session_state.produto_nome_q1 # Recuperar o nome
+
         if resultados_q1['erro']:
             st.error(resultados_q1['erro'])
         else:
-            st.subheader("Resultados da Previsão")
+            st.subheader(f"Resultados da Previsão para: {produto_nome_q1}")
             
-            # Métricas
-            col1, col2, col3 = st.columns(3)
-            col1.metric(
-                label="Erro Percentual Médio (MAPE)",
-                value=f"{resultados_q1['mape']*100:.2f}%",
-                help="Em média, o modelo erra a previsão em X%. Quanto menor, melhor."
-            )
-            col2.metric(
-                label="Erro Médio em Reais (RMSE)",
-                value=f"R$ {resultados_q1['rmse']:.2f}",
-                help="Em média, o modelo erra a previsão em X Reais. Quanto menor, melhor."
-            )
-            col3.metric(
-                label="Previsão para Próxima Semana",
-                value=f"R$ {resultados_q1['previsao_t1']:.2f}"
-            )
-            
-            # Gráfico Plotly
             fig_q1 = plot_previsao_q1(resultados_q1['df_plot'])
             st.plotly_chart(fig_q1, use_container_width=True)
             
-            with st.expander("O que este gráfico significa?"):
-                st.markdown("""
-                - A linha **'Preço Real'** é o que de fato aconteceu com o preço nas últimas semanas de teste.
-                - A linha **'Previsão do Modelo'** é o que o modelo *achou* que ia acontecer.
-                
-                Quanto mais próximas as duas linhas, melhor é o nosso modelo.
-                """)
-            
-            with st.expander("Ver série histórica completa"):
-                fig_hist = px.line(resultados_q1['serie_original_plot'], title="Série de Preço Completa (Treino + Teste)")
-                st.plotly_chart(fig_hist, use_container_width=True)
+            st.subheader("Métricas de Erro do Modelo (em semanas de teste)")
+            col1, col2 = st.columns(2)
+            col1.metric("Mean Squared Error (MSE)", f"{resultados_q1['mse']:.4f}")
+            col2.metric("Mean Absolute Error (MAE)", f"{resultados_q1['mae']:.4f}")
+            st.caption("Quanto menores as métricas, melhor a precisão do modelo.")
 
-# PÁGINA 3: QUESTÃO 2 (LIDERANÇA)
+
+# PÁGINA 3: QUESTÃO 2 (Liderança)
 elif pagina == "Questão 2: Liderança de Preços":
-    st.header("Questão 2: Um mercado 'puxa' o preço do outro?")
-    st.info("""
-    **Objetivo:** Analisar se a mudança de preço de um produto em um mercado
-    antecipa a mudança de preço em outro mercado.
+    st.title("Questão 2: Análise de Liderança de Preços")
+    st.write("""
+    Esta análise investiga qual mercado "lidera" ou "puxa" o preço de outro.
+    Utilizamos duas técnicas:
+    1.  **Causalidade de Granger:** Testa estatisticamente se a série de preços do Mercado A é útil para prever a série do Mercado B (e vice-versa).
+    2.  **Cross-Correlation (CCF):** Mede a semelhança entre as duas séries em diferentes "atrasos" (lags), mostrando quem se move primeiro e por quantas semanas.
     """)
 
     # Filtros Q2
     st.sidebar.subheader("Filtros - Questão 2")
-    prod_q2 = st.sidebar.selectbox("Selecione o Produto:", analisador.produtos)
-    estab_A = st.sidebar.selectbox("Mercado 'Líder' (A):", analisador.estabelecimentos, index=0)
-    estab_B = st.sidebar.selectbox("Mercado 'Seguidor' (B):", analisador.estabelecimentos, index=1)
-    max_lag_q2 = st.sidebar.slider("Atraso Máximo (Semanas):", 2, 12, 8)
     
-    if estab_A == estab_B:
+    # Nomes dos produtos
+    nomes_produtos_ordenados_q2 = sorted(mapa_produto.keys())
+    produto_nome_q2 = st.sidebar.selectbox(
+        "Selecione o Produto:",
+        nomes_produtos_ordenados_q2,
+        key='prod_q2'
+    )
+    # Obter ID
+    prod_q2_id = mapa_produto[produto_nome_q2]
+    
+    # Nomes dos estabelecimentos
+    nomes_estab_ordenados = sorted(mapa_estab.keys())
+    
+    estab_A_nome = st.sidebar.selectbox(
+        "Mercado 'Líder' (A):",
+        nomes_estab_ordenados,
+        index=0, # Padrão
+        key='estab_A'
+    )
+    # Obter ID
+    estab_A_id = mapa_estab[estab_A_nome]
+
+    estab_B_nome = st.sidebar.selectbox(
+        "Mercado 'Seguidor' (B):",
+        nomes_estab_ordenados,
+        index=1, # Padrão
+        key='estab_B'
+    )
+    # Obter ID
+    estab_B_id = mapa_estab[estab_B_nome]
+    
+    max_lag_q2 = st.sidebar.slider("Atraso Máximo (Semanas):", 2, 12, 8, key='lag_q2')
+
+    if estab_A_id == estab_B_id:
         st.sidebar.error("Selecione dois mercados diferentes.")
-    elif st.sidebar.button("Rodar Análise de Liderança", type="primary"):
-        resultados_q2 = rodar_analise_q2(analisador, prod_q2, estab_A, estab_B, max_lag_q2)
+    elif st.sidebar.button("Rodar Análise de Liderança", type="primary", key='btn_q2'):
+        # Passar os IDs numéricos para a função
+        resultados_q2 = rodar_analise_q2(
+            analisador,
+            prod_q2_id,
+            estab_A_id,
+            estab_B_id,
+            max_lag_q2
+        )
+        st.session_state.resultados_q2 = resultados_q2
+        # Salvar os nomes para exibição
+        st.session_state.q2_nomes = {
+            'produto': produto_nome_q2,
+            'estab_A': estab_A_nome,
+            'estab_B': estab_B_nome
+        }
+        
+    # Exibição de Resultados Q2
+    if 'resultados_q2' in st.session_state:
+        resultados_q2 = st.session_state.resultados_q2
+        nomes = st.session_state.q2_nomes # Recuperar nomes
         
         if resultados_q2['erro']:
             st.error(resultados_q2['erro'])
         else:
-            st.subheader("Resultados da Análise")
+            st.subheader(f"Resultados da Análise para: {nomes['produto']}")
             
-            # Gráfico de Séries
-            fig_series_q2 = plot_series_q2(resultados_q2['dados_pares_plot'], estab_A, estab_B)
+            # Renomear colunas do DataFrame (de ID para Nome) antes de plotar
+            df_plot_q2 = resultados_q2['dados_pares_plot'].rename(columns={
+                str(estab_A_id): nomes['estab_A'], # Convertendo ID para str por segurança
+                str(estab_B_id): nomes['estab_B']
+            })
+
+            fig_series_q2 = plot_series_q2(df_plot_q2, nomes['estab_A'], nomes['estab_B'])
             st.plotly_chart(fig_series_q2, use_container_width=True)
             
             st.markdown("---")
-            col1, col2 = st.columns(2)
             
+            col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Análise de Causalidade")
-                st.caption(f"Verifica se '{estab_A}' estatisticamente 'puxa' '{estab_B}' (e vice-versa).")
+                st.caption(f"Verifica se '{nomes['estab_A']}' estatisticamente 'puxa' '{nomes['estab_B']}' (e vice-versa).")
                 
                 p_A_B = resultados_q2['p_A_causa_B']
                 p_B_A = resultados_q2['p_B_causa_A']
@@ -231,7 +358,7 @@ elif pagina == "Questão 2: Liderança de Preços":
                 # Métrica A -> B
                 valor_A_B = "Sim ✅" if p_A_B < 0.05 else "Não ❌"
                 st.metric(
-                    label=f"Mercado '{estab_A}' puxa o preço de '{estab_B}'?",
+                    label=f"Mercado '{nomes['estab_A']}' puxa o preço de '{nomes['estab_B']}'?",
                     value=valor_A_B,
                     help=f"Teste de Causalidade de Granger (p-valor={p_A_B:.4f}). Se p-valor < 0.05, consideramos 'Sim'."
                 )
@@ -239,7 +366,7 @@ elif pagina == "Questão 2: Liderança de Preços":
                 # Métrica B -> A
                 valor_B_A = "Sim ✅" if p_B_A < 0.05 else "Não ❌"
                 st.metric(
-                    label=f"Mercado '{estab_B}' puxa o preço de '{estab_A}'?",
+                    label=f"Mercado '{nomes['estab_B']}' puxa o preço de '{nomes['estab_A']}'?",
                     value=valor_B_A,
                     help=f"Teste de Causalidade de Granger (p-valor={p_B_A:.4f}). Se p-valor < 0.05, consideramos 'Sim'."
                 )
@@ -252,8 +379,10 @@ elif pagina == "Questão 2: Liderança de Preços":
                 fig_ccf_q2 = plot_ccf_q2(resultados_q2['ccf_df'])
                 st.plotly_chart(fig_ccf_q2, use_container_width=True)
                 
+                max_corr_lag = resultados_q2['ccf_df']['CCF'].abs().idxmax()
+                max_lag_val = resultados_q2['ccf_df'].loc[max_corr_lag, 'Lag']
+                
                 st.metric(
-                    label="Atraso com Maior Correlação:",
-                    value=f"{resultados_q2['best_lag']} Semana(s)",
-                    help=f"O 'eco' da mudança de preço do mercado A no mercado B é mais forte após este número de semanas (Correlação: {resultados_q2['best_corr']:.3f})."
+                    label="Atraso de Maior Impacto:",
+                    value=f"{max_lag_val} semanas"
                 )
