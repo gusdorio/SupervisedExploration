@@ -13,13 +13,13 @@ except ImportError:
              "Certifique-se de que ele está na pasta 'classes'.")
     st.stop()
 
-# Constantes de Arquivos
+# Constantes de Arquivos 
 BASE_DATA_PATH = "./data"
 DATA_FILE = os.path.join(BASE_DATA_PATH, "dados_limpos_ICB.xlsx")
 MAPA_PRODUTO_FILE = os.path.join(BASE_DATA_PATH, "mapa_Produto.json")
 MAPA_ESTAB_FILE = os.path.join(BASE_DATA_PATH, "mapa_Estabelecimento.json")
 
-# Lista de Categorias para Q1
+# Lista de Categorias para Q1 (baseado no CSV)
 LISTA_CATEGORIAS = [
     "Classe_Carnes Vermelhas",
     "Classe_Grãos & Massas",
@@ -31,7 +31,7 @@ LISTA_CATEGORIAS = [
 # Configuração da Página
 st.set_page_config(layout="wide", page_title="Análise Cesta Básica")
 
-# Funções de Carregamento (com Caching)
+# Funções de Carregamento (com Caching) 
 
 @st.cache_data
 def carregar_mapas():
@@ -92,13 +92,21 @@ def load_data(file_path):
         
     return df
 
-# Funções de Plotagem 
+# Funções de Plotagem
 
 def plot_previsao_q1(df_plot):
     fig = px.line(df_plot, title="Comparação: Preço Real vs. Previsão do Modelo (em semanas de teste)",
                   labels={'value': 'Preço (PPK)', 'index': 'Semana', 'variable': 'Legenda'})
     fig.update_traces(line=dict(width=2.5))
     fig.update_layout(hovermode="x unified")
+    return fig
+
+def plot_futuro_q1(df_futuro):
+    """Cria um gráfico Plotly para as previsões futuras."""
+    fig = px.line(df_futuro, y='Previsão Futura (PPK)', title="Previsão de Preços (Próximas 12 Semanas)")
+    # Formata a linha como tracejada/pontilhada para indicar previsão
+    fig.update_traces(line=dict(color='orange', width=2.5, dash='dot'))
+    fig.update_layout(hovermode="x unified", xaxis_title='Data', yaxis_title='Previsão (PPK)')
     return fig
 
 def plot_series_q2(df_plot, estab_A_nome, estab_B_nome):
@@ -125,21 +133,21 @@ def plot_ccf_q2(ccf_df):
     fig.update_layout(hovermode="x unified")
     return fig
 
-# Funções de Análise (Backend) 
+# Funções de Análise (Backend)
 
 @st.cache_data
 def rodar_analise_q1(_analisador, nome_categoria, n_semanas):
     """Executa a análise da Questão 1 (Previsão)."""
     try:
-        df_plot, mse, mae, mape, erro = _analisador.analisar_previsao_categoria(nome_categoria, n_semanas)
+        df_plot, mse, mae, mape, df_futuro, erro = _analisador.analisar_previsao_categoria(nome_categoria, n_semanas)
         
         if erro:
-            return {'df_plot': None, 'mse': None, 'mae': None, 'mape': None, 'erro': erro}
-        
-        return {'df_plot': df_plot, 'mse': mse, 'mae': mae, 'mape': mape, 'erro': None}
+            return {'df_plot': None, 'mse': None, 'mae': None, 'mape': None, 'df_futuro': None, 'erro': erro}
+    
+        return {'df_plot': df_plot, 'mse': mse, 'mae': mae, 'mape': mape, 'df_futuro': df_futuro, 'erro': None}
 
     except Exception as e:
-        return {'df_plot': None, 'mse': None, 'mae': None, 'mape': None, 'erro': f"Erro inesperado na análise Q1: {e}"}
+        return {'df_plot': None, 'mse': None, 'mae': None, 'mape': None, 'df_futuro': None, 'erro': f"Erro inesperado na análise Q1: {e}"}
 
 @st.cache_data
 def rodar_analise_q2(_analisador, produto_id, estab_a_id, estab_b_id, max_lag):
@@ -161,9 +169,8 @@ def rodar_analise_q2(_analisador, produto_id, estab_a_id, estab_b_id, max_lag):
     except Exception as e:
         return {'erro': f"Erro inesperado na análise Q2: {e}"}
 
-# --- INÍCIO DO APLICATIVO ---
+# INÍCIO DO APLICATIVO 
 
-# Carrega mapas de PRODUTO e ESTAB (necessários para Q2)
 mapa_produto, mapa_estab, mapa_id_para_produto, mapa_id_para_estab = carregar_mapas()
 
 try:
@@ -184,15 +191,13 @@ pagina = st.sidebar.radio(
     label_visibility="collapsed"
 )
 
-# PÁGINA 1: VISÃO GERAL (MODIFICADA)
+# PÁGINA 1: VISÃO GERAL
 if pagina == "Visão Geral":
     st.title("Visão Geral e Estatísticas dos Dados")
     st.write("Uma análise exploratória de como os dados limpos se comportam.")
     
-    # Carrega os dados brutos (limpos)
     df_raw = load_data(DATA_FILE)
     
-    # 1. Métricas Principais
     st.subheader("Métricas Principais da Base de Dados")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total de Coletas (Registros)", f"{len(df_raw):,}")
@@ -201,7 +206,6 @@ if pagina == "Visão Geral":
     
     st.markdown("---")
 
-    # 2. Estatísticas Descritivas
     st.subheader("Estatísticas Descritivas (Colunas Numéricas)")
     st.write("Análise das colunas de Preço, Quantidade e Preço por Kilo/Unidade (PPK).")
     numeric_cols = ['PPK', 'Preco', 'Quantidade']
@@ -212,37 +216,28 @@ if pagina == "Visão Geral":
     col1_vis, col2_vis = st.columns(2)
     
     with col1_vis:
-        # 3. Distribuição de Preços (PPK)
         st.subheader("Distribuição de Preço por Kilo/Unidade (PPK)")
         st.write("Mostra a frequência dos diferentes valores de PPK.")
-        
-        # Filtro para outliers (apenas para visualização, para não esticar o gráfico)
         ppk_filter = df_raw['PPK'] < df_raw['PPK'].quantile(0.99)
-        
         fig_hist = px.histogram(df_raw[ppk_filter], x='PPK', nbins=50,
                                 title='Distribuição de Preços (PPK) - Excluindo 1% superior')
         st.plotly_chart(fig_hist, use_container_width=True)
 
     with col2_vis:
-        # 4. Contagem por Categoria
         st.subheader("Contagem de Registros por Categoria")
         st.write("Número de coletas de produtos em cada categoria principal.")
-        
-        # Soma as colunas booleanas de Categoria
         category_counts = df_raw[LISTA_CATEGORIAS].sum().reset_index()
         category_counts.columns = ['Categoria', 'Contagem']
-        
         fig_bar = px.bar(category_counts, 
                          x='Categoria', 
                          y='Contagem',
                          title='Contagem de Registros por Categoria',
                          color='Categoria')
-        fig_bar.update_xaxes(tickangle=45) # Inclina os labels
+        fig_bar.update_xaxes(tickangle=45) 
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.markdown("---")
 
-    # 5. Amostra dos Dados (Como estava antes)
     st.subheader("Amostra dos Dados Mapeados")
     st.write("Visualização dos IDs numéricos mapeados de volta para seus nomes (se disponível).")
     
@@ -271,7 +266,8 @@ elif pagina == "Questão 1: Previsão de Preços":
         help="Análise do preço médio de todos os itens desta categoria."
     )
     
-    n_semanas_q1 = st.sidebar.slider("Semanas para Previsão (Teste):", 4, 24, 8, key='sem_q1')
+    n_semanas_q1 = st.sidebar.slider("Semanas para Previsão (Teste):", 4, 24, 8, key='sem_q1',
+                                     help="Define quantas semanas usar para testar o modelo (impacta o MAPE).")
 
     if st.sidebar.button("Rodar Previsão", type="primary", key='btn_q1'):
         resultados_q1 = rodar_analise_q1(analisador, categoria_nome_q1, n_semanas_q1)
@@ -288,9 +284,11 @@ elif pagina == "Questão 1: Previsão de Preços":
         else:
             st.subheader(f"Resultados da Previsão para: {categoria_nome_q1}")
             
+            # Gráfico de Teste
             fig_q1 = plot_previsao_q1(resultados_q1['df_plot'])
             st.plotly_chart(fig_q1, use_container_width=True)
             
+            # Métricas
             st.subheader("Métricas de Erro do Modelo (em semanas de teste)")
             col1, col2, col3 = st.columns(3)
             col1.metric("Mean Squared Error (MSE)", f"{resultados_q1['mse']:.4f}")
@@ -304,6 +302,25 @@ elif pagina == "Questão 1: Previsão de Preços":
                 f"{mape_percent:.2f} %",
                 help=f"O objetivo do relatório era um MAPE < 10%.{objetivo_atingido}"
             )
+            
+            st.markdown("---")
+            
+            st.subheader("Previsão Futura (Próximas 12 Semanas)")
+            
+            col_futuro1, col_futuro2 = st.columns([2, 1]) # Gráfico maior, tabela menor
+            
+            with col_futuro1:
+                st.write("Gráfico da tendência prevista para as próximas 12 semanas (treinado com todos os dados).")
+                fig_futuro_q1 = plot_futuro_q1(resultados_q1['df_futuro'])
+                st.plotly_chart(fig_futuro_q1, use_container_width=True)
+            
+            with col_futuro2:
+                st.write("Valores Previstos (R$ PPK):")
+                # Formata o dataframe para melhor visualização
+                st.dataframe(
+                    resultados_q1['df_futuro'].style.format("{:.2f}"),
+                    use_container_width=True
+                )
 
 
 # PÁGINA 3: QUESTÃO 2 (Liderança)

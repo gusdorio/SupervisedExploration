@@ -20,10 +20,8 @@ class AnalisadorCestaBasicaPro:
     def __init__(self, filepath):
         print(f"Carregando dados de '{filepath}' com Pandas.")
         try:
-            # O dashboard.py passa 'dados_limpos_ICB.xlsx', que é o correto.
             self.dados_brutos = pd.read_excel(filepath, sheet_name="Sheet1", engine='openpyxl')
             
-            # Tentar encontrar uma coluna de data e definir como índice
             if 'Data' in self.dados_brutos.columns:
                 self.dados_brutos['Data'] = pd.to_datetime(self.dados_brutos['Data'])
                 self.dados_brutos.set_index('Data', inplace=True)
@@ -42,11 +40,8 @@ class AnalisadorCestaBasicaPro:
             self.dados_brutos = None
             
         if self.dados_brutos is not None:
-            # Carrega IDs numéricos para Q2
             self.estabelecimentos = sorted(self.dados_brutos['Estabelecimento'].unique().tolist())
             self.produtos = sorted(self.dados_brutos['Produto'].unique().tolist())
-            
-            # MODIFICAÇÃO: Identifica colunas de Categoria para Q1
             self.categorias = [col for col in self.dados_brutos.columns if col.startswith('Classe_')]
             print(f"Categorias identificadas para Q1: {self.categorias}")
 
@@ -84,55 +79,84 @@ class AnalisadorCestaBasicaPro:
         """
         Função MODIFICADA para Questão 1 (alinhada ao Relatório).
         Recebe um 'nome_categoria' string (ex: 'Classe_Carnes Vermelhas') e faz a previsão.
-        Retorna (df_plot, mse, mae, mape, erro)
+        Retorna (df_plot, mse, mae, mape, df_futuro, erro)
         """
         if self.dados_brutos is None:
-            return None, None, None, None, "Dados brutos não foram carregados."
+            return None, None, None, None, None, "Dados brutos não foram carregados."
 
         if nome_categoria not in self.categorias:
-             return None, None, None, None, f"Categoria '{nome_categoria}' não encontrada nos dados."
+             return None, None, None, None, None, f"Categoria '{nome_categoria}' não encontrada nos dados."
 
         # 1. Filtrar pela COLUNA de Categoria
         dados_cat = self.dados_brutos[self.dados_brutos[nome_categoria] == True]
         
         if dados_cat.empty:
-            return None, None, None, None, f"Sem dados para a Categoria '{nome_categoria}'."
+            return None, None, None, None, None, f"Sem dados para a Categoria '{nome_categoria}'."
         
-        # 2. Criar a série temporal (calcula a média de PPK para *todos* itens daquela categoria)
+        # 2. Criar a série temporal
         serie_temporal = dados_cat['PPK'].resample(freq).mean()
         serie_temporal = serie_temporal.fillna(method='ffill')
         serie_temporal.dropna(inplace=True)
         
         if serie_temporal.empty:
-            return None, None, None, None, f"Série temporal vazia para a Categoria '{nome_categoria}'."
+            return None, None, None, None, None, f"Série temporal vazia para a Categoria '{nome_categoria}'."
 
         # 3. Criar features
         X, y = self._criar_features_lags(serie_temporal, n_lags)
 
         if len(y) < test_size_semanas + n_lags:
-            return None, None, None, None, "Dados insuficientes para treino/teste após criação de lags."
+            return None, None, None, None, None, "Dados insuficientes para treino/teste após criação de lags."
 
-        # 4. Dividir dados
-        X_train, X_test = X.iloc[:-test_size_semanas], X.iloc[-test_size_semanas:]
-        y_train, y_test = y.iloc[:-test_size_semanas], y.iloc[-test_size_semanas:]
+        # 4. Dividir dados (para cálculo de métricas)
+        X_train_metrica, X_test_metrica = X.iloc[:-test_size_semanas], X.iloc[-test_size_semanas:]
+        y_train_metrica, y_test_metrica = y.iloc[:-test_size_semanas], y.iloc[-test_size_semanas:]
 
-        if X_train.empty or y_train.empty:
-            return None, None, None, None, "Dados de treino insuficientes após divisão."
+        if X_train_metrica.empty or y_train_metrica.empty:
+            return None, None, None, None, None, "Dados de treino insuficientes após divisão."
 
-        # 5. Treinar modelo
-        modelo = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-        modelo.fit(X_train, y_train)
+        # 5. Treinar modelo (para métricas)
+        modelo_metrica = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+        modelo_metrica.fit(X_train_metrica, y_train_metrica)
 
         # 6. Avaliar (calcula MAPE conforme Relatório)
-        predicoes = modelo.predict(X_test)
-        mse = mean_squared_error(y_test, predicoes)
-        mae = mean_absolute_error(y_test, predicoes)
-        mape = mean_absolute_percentage_error(y_test, predicoes)
+        predicoes = modelo_metrica.predict(X_test_metrica)
+        mse = mean_squared_error(y_test_metrica, predicoes)
+        mae = mean_absolute_error(y_test_metrica, predicoes)
+        mape = mean_absolute_percentage_error(y_test_metrica, predicoes)
 
-        # 7. Preparar dados para plotagem
-        df_plot = pd.DataFrame({'Preço Real': y_test, 'Previsão do Modelo': predicoes})
+        # 7. Preparar dados para plotagem de teste
+        df_plot_teste = pd.DataFrame({'Preço Real': y_test_metrica, 'Previsão do Modelo': predicoes})
         
-        return df_plot, mse, mae, mape, None # erro é None
+        # 8. Treinar modelo final com TODOS os dados
+        modelo_final = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+        modelo_final.fit(X, y) # X, y é todo o dataset com lags
+
+        # 9. Previsão Futura (Auto-regressiva)
+        n_futuro = 12 # Prever 12 semanas fixas
+        
+        # Pega a última linha de features (lags) conhecida
+        last_features = X.iloc[-1].values.reshape(1, -1)
+        previsoes_futuras = []
+
+        for _ in range(n_futuro):
+            # Prever o próximo passo (t+1)
+            prox_pred = modelo_final.predict(last_features)[0]
+            previsoes_futuras.append(prox_pred)
+            
+            # Atualizar o vetor de features para prever (t+2)
+            # "Empurra" os valores e insere a nova previsão no início
+            last_features = np.roll(last_features, 1)
+            last_features[0, 0] = prox_pred
+
+        # 10. Criar DataFrame futuro
+        ultimo_indice = y.index[-1]
+        indice_futuro = pd.date_range(start=ultimo_indice + pd.Timedelta(weeks=1), periods=n_futuro, freq=freq)
+        
+        df_futuro = pd.DataFrame(previsoes_futuras, index=indice_futuro, columns=['Previsão Futura (PPK)'])
+        df_futuro.index.name = 'Data Futura'
+
+        # 11. Retornar
+        return df_plot_teste, mse, mae, mape, df_futuro, None # erro é None
 
 
     # MÉTODOS DE ANÁLISE (Dashboard - Questão 2)
