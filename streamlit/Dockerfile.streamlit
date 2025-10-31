@@ -3,19 +3,24 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including curl for health check
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY streamlit/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy dashboard and dependencies
+# Copy dashboard
 COPY dashboard.py .
-COPY classes/ ./classes/
+
+# Copy the classes directory (algorithms)
+COPY ml_model/classes/ ./classes/
+
+# Copy data directory
 COPY data/ ./data/
 
 # Expose Streamlit default port

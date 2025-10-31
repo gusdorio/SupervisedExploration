@@ -3,8 +3,11 @@ import numpy as np
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from scipy import stats
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 import warnings
+import json
+import os
+
 warnings.filterwarnings('ignore')
 
 
@@ -398,3 +401,228 @@ class DataCleaner:
     def get_report(self) -> Dict:
         """Retorna relatório detalhado da limpeza."""
         return self.cleaning_report
+    
+
+class ICBDataCleaner:
+    """
+    Specialized cleaner for ICB (Cesta Básica) dataset.
+    Performs all transformations from the notebook.
+    """
+
+    def __init__(self, input_file: str = 'data/ICB_2s-2025.xlsx'):
+        """Initialize with the raw data file path."""
+        self.input_file = input_file
+        self.df = None
+        self.label_mappings = {}
+        self.product_classes = {
+            'Vegetais': ['Tomate', 'Banana Prata', 'Banana Nanica', 'Batata'],
+            'Carnes Vermelhas': ['Carne Bovina Acém', 'Carne Bovina Coxão Mole', 'Carne Suína Pernil'],
+            'Aves': ['Frango Peito', 'Frango Sobrecoxa'],
+            'Laticínios': ['Manteiga', 'Leite'],
+            'Padaria & Cozinha': ['Pão', 'Ovo', 'Farinha de Trigo', 'Café', 'Açúcar', 'Óleo'],
+            'Grãos & Massas': ['Arroz', 'Feijão', 'Macarrão'],
+        }
+
+    def load_data(self) -> pd.DataFrame:
+        """Load the raw Excel data."""
+        print(f"Loading data from '{self.input_file}'...")
+        self.df = pd.read_excel(self.input_file)
+        print(f"Dataset loaded: {self.df.shape[0]} rows, {self.df.shape[1]} columns")
+        return self.df
+
+    def clean_products(self) -> None:
+        """Clean and standardize product names."""
+        print("\nCleaning product names...")
+
+        # Carne Bovina Acém variations
+        mapping = {k: "Carne Bovina Acém" for k in ['Carne Acém', 'Carne Acem', 'Carne Bovina Acem']}
+        self.df['Produto'] = self.df['Produto'].replace(mapping)
+
+        # Carne Bovina Coxão Mole
+        self.df['Produto'] = self.df['Produto'].replace({'Carne Coxão Mole': 'Carne Bovina Coxão Mole'})
+
+        # Pão variations
+        self.df['Produto'] = self.df['Produto'].replace({'Pão Francês': 'Pão'})
+
+        # Farinha variations
+        self.df['Produto'] = self.df['Produto'].replace({'Farinha': 'Farinha de Trigo'})
+
+        # Macarrão variations
+        self.df['Produto'] = self.df['Produto'].replace({'Macarrão com Ovos': 'Macarrão'})
+
+        # Carne Suína Pernil
+        self.df['Produto'] = self.df['Produto'].replace({'Carne Pernil': 'Carne Suína Pernil'})
+
+        unique_products = len(self.df['Produto'].unique())
+        print(f"Products cleaned. Unique products: {unique_products}")
+
+    def add_product_classes(self) -> None:
+        """Add product class categorization."""
+        print("\nAdding product classes...")
+
+        # Create product to class mapping
+        prod_to_class = {prod: cls for cls, prods in self.product_classes.items()
+                        for prod in prods}
+
+        # Add Classe column
+        self.df['Classe'] = self.df['Produto'].map(prod_to_class)
+
+        # Create boolean columns for each class
+        for class_name in self.product_classes.keys():
+            col_name = f'Classe_{class_name}'
+            self.df[col_name] = self.df['Classe'] == class_name
+
+        print(f"Added {len(self.product_classes)} product classes")
+
+    def clean_brands(self) -> None:
+        """Clean and standardize brand names."""
+        print("\nCleaning brand names...")
+
+        # Products without brand (assign 'Sem Marca')
+        without_brand = ['Tomate', 'Banana Prata', 'Banana Nanica', 'Batata',
+                        'Pão', 'Frango Peito', 'Ovo', 'Carne Bovina Acém',
+                        'Frango Sobrecoxa', 'Carne Bovina Coxão Mole', 'Carne Suína Pernil']
+
+        self.df.loc[self.df['Produto'].isin(without_brand), 'Marca'] = 'Sem Marca'
+
+        # Remove null values in Marca column
+        self.df = self.df.dropna(subset=['Marca'])
+
+        # Convert to string and clean variations
+        self.df['Marca'] = self.df['Marca'].astype(str)
+
+        # Brand name standardization
+        brand_replacements = {
+            '3 corações': '3 Corações',
+            'Albaruska ': 'Albaruska',
+            'Alto Alegre ': 'Alto Alegre',
+            'Camil ': 'Camil',
+            'DaVaca': 'Da Vaca',
+            'Davaca': 'Da Vaca',
+            'Emporio São João': 'Empório São João',
+            'Grão De Campo': 'Grão Do Campo',
+            'Grão de Campo': 'Grão Do Campo',
+            'Grão de Campo ': 'Grão Do Campo',
+            'Grão do Campo': 'Grão Do Campo',
+            'Guarani ': 'Guarani',
+            'Knor': 'Knorr',
+            'Lider': 'Líder',
+            'Outra': 'Outro',
+            'Outro2': 'Outro',
+            'Pateko': 'Patéko',
+            'Paulista ': 'Paulista',
+            'Piracanjuba ': 'Piracanjuba',
+            'Prato Fino ': 'Prato Fino',
+            'Qualita': 'Qualitá',
+            'Renata ': 'Renata',
+            'Saboroso ': 'Saboroso',
+            'Serrazul\n': 'Serrazul',
+            'São': 'São Joaquim',
+            'São Joaquim ': 'São Joaquim',
+            'Urbano ': 'Urbano',
+            'Vasconcelos ': 'Vasconcelos',
+        }
+
+        for old, new in brand_replacements.items():
+            self.df['Marca'] = self.df['Marca'].replace({old: new})
+
+        unique_brands = len(self.df['Marca'].unique())
+        print(f"Brands cleaned. Unique brands: {unique_brands}")
+
+    def apply_datacleaner(self) -> pd.DataFrame:
+        """
+        Apply the general DataCleaner transformations.
+        This uses the DataCleaner class from ml_model/classes/datacleaner.py
+        which handles:
+        - Duplicate removal
+        - Missing value imputation
+        - Outlier detection and capping
+        - Categorical encoding (creating label mappings)
+        - Optional normalization
+        """
+        print("\nApplying general data cleaning...")
+
+        # Create DataCleaner instance with current dataframe
+        cleaner = DataCleaner(self.df)
+
+        # Run complete cleaning pipeline
+        # This will:
+        # 1. Analyze data structure
+        # 2. Remove duplicates
+        # 3. Handle missing values (auto strategy for numeric, mode for categorical)
+        # 4. Handle outliers using IQR method with capping
+        # 5. Encode categorical variables (Produto, Marca, Estabelecimento)
+        # 6. NOT normalize (preserve original price values)
+        df_clean = cleaner.clean_all(
+            remove_duplicates=True,
+            missing_threshold=0.5,
+            outlier_method='iqr',
+            encode=True,
+            normalize=False
+        )
+
+        # Store label mappings from encoding step
+        # These mappings show: {original_name: numeric_id}
+        self.label_mappings = cleaner.label_mappings
+
+        return df_clean
+
+    def save_mappings(self, output_dir: str = 'data') -> None:
+        """Save the label mappings to JSON files."""
+        print(f"\nSaving mappings to {output_dir}/...")
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        for column, mapping in self.label_mappings.items():
+            filepath = os.path.join(output_dir, f'mapa_{column}.json')
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(mapping, f, ensure_ascii=False, indent=4)
+            print(f"  Saved: mapa_{column}.json")
+
+    def save_cleaned_data(self, output_file: str = 'data/dados_limpos_ICB.xlsx') -> None:
+        """Save the cleaned data to Excel."""
+        print(f"\nSaving cleaned data to '{output_file}'...")
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        self.df_clean.to_excel(output_file, index=False)
+        print(f"Cleaned data saved successfully!")
+
+    def process(self) -> Tuple[pd.DataFrame, Dict]:
+        """
+        Execute the complete cleaning pipeline.
+        Returns the cleaned dataframe and mappings.
+        """
+        print("=" * 60)
+        print("STARTING ICB DATA CLEANING PIPELINE")
+        print("=" * 60)
+
+        # Load data
+        self.load_data()
+
+        # Clean products
+        self.clean_products()
+
+        # Add product classes
+        self.add_product_classes()
+
+        # Clean brands
+        self.clean_brands()
+
+        # Apply general cleaning
+        self.df_clean = self.apply_datacleaner()
+
+        # Save outputs
+        self.save_mappings()
+        self.save_cleaned_data()
+
+        print("\n" + "=" * 60)
+        print("DATA CLEANING PIPELINE COMPLETED SUCCESSFULLY")
+        print("=" * 60)
+
+        return self.df_clean, self.label_mappings
+
+
+if __name__ == "__main__":
+    # Run the cleaner when executed directly
+    cleaner = ICBDataCleaner()
+    df_clean, mappings = cleaner.process()
+    print(f"\nFinal dataset shape: {df_clean.shape}")

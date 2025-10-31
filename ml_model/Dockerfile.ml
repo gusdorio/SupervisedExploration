@@ -10,15 +10,20 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY ml_model/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the classes directory and data
-COPY classes/ ./classes/
+# Copy ml_model application files
+COPY ml_model/ ./ml_model/
+
+# Copy the classes directory (algorithms and datacleaner)
+COPY ml_model/classes/ ./classes/
+
+# Copy data directory
 COPY data/ ./data/
 
 # Expose port for API (if needed in the future)
 EXPOSE 5000
 
-# Keep container running and ready to serve predictions
-CMD ["python", "-c", "print('ML Model service is ready'); import time; time.sleep(infinity)"]
+# Run the ML pipeline
+CMD ["python", "ml_model/main.py"]

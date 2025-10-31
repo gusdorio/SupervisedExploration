@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # Machine Learning Model Service
   ml-model:
@@ -6,8 +8,9 @@ services:
       dockerfile: ml_model/Dockerfile.ml
     container_name: ml-model-service
     volumes:
-      - ./data:/app/data:ro  # Read-only access to data
-      - ./classes:/app/classes:ro  # Read-only access to classes
+      - ./data:/app/data  # Access to data (read/write for processing)
+      - ./ml_model/classes:/app/classes:ro  # Read-only access to classes
+      - ./data/results:/app/data/results  # Results output directory
     networks:
       - app-network
     restart: unless-stopped
@@ -24,8 +27,8 @@ services:
       - "8501:8501"  # Expose Streamlit dashboard to host
     volumes:
       - ./data:/app/data:ro  # Read-only access to data
-      - ./classes:/app/classes:ro  # Read-only access to classes
-      - ./dashboard.py:/app/dashboard.py  # Mount dashboard for hot-reload during development
+      - ./ml_model/classes:/app/classes:ro  # Read-only access to classes
+      - ./dashboard.py:/app/dashboard.py:ro  # Mount dashboard for hot-reload during development
     networks:
       - app-network
     depends_on:
