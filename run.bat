@@ -2,7 +2,6 @@
 title Compilador do Analisador de Cesta Basica
 
 REM --- Nomes de arquivos esperados ---
-set PYTHON_INSTALLER_NAME=python-installer.exe
 set REQUIREMENTS_FILE=requirements.txt
 
 cls
@@ -11,12 +10,12 @@ REM ==========================================================
 REM  PASSO 0: VERIFICAR SE O PYTHON ESTA INSTALADO
 REM ==========================================================
 echo "Verificando instalacao do Python..."
-python3 --version >nul 2>&1
+python --version >nul 2>&1
 
 REM Se o comando "python" falhar (errorlevel nao for 0), pule para a secao de instalacao
 if %errorlevel% neq 0 (
     echo "Python nao encontrado. Tentando instalar..."
-    goto :InstallPython
+    goto :pythonError
 )
 
 echo "Python encontrado. Prosseguindo para a compilacao."
@@ -38,9 +37,11 @@ if not exist "%REQUIREMENTS_FILE%" (
 )
 
 REM Garante que o pip esta atualizado e instala o PyInstaller e as dependencias
-python3 -m venv .venv
+if not exist ".venv" (
+    python3 -m venv .venv
+)
 .venv/Scripts/activate
-python3 -m pip install --upgrade pip
+python -m pip install --upgrade pip
 pip install -r %REQUIREMENTS_FILE%
 
 REM Verifica se a instalacao falhou
@@ -58,7 +59,7 @@ python3 -m streamlit run dashboard.py
 
 REM Verifica se a compilacao falhou
 if %errorlevel% neq 0 (
-    goto :
+    goto :CompileError
 )
 
 goto :Success
@@ -104,6 +105,16 @@ echo "----------------------------------------------------------"
 echo " ERRO: Falha ao iniciar o dashboard"
 echo "----------------------------------------------------------"
 echo " Verifique a inicializacao do venv e as dependencias."
+echo.
+pause
+exit /b
+
+:pythonError
+cls
+echo "----------------------------------------------------------"
+echo " ERRO: O python nao esta instalado"
+echo "----------------------------------------------------------"
+echo " Faca a instalacao do python 3.10 em python.org"
 echo.
 pause
 exit /b
