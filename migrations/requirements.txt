@@ -1,0 +1,16 @@
+# Database migration dependencies
+# These are needed for running the migration scripts
+
+# Database drivers and ORMs
+sqlalchemy==2.0.23
+pymysql==1.1.0
+mongoengine==0.27.0
+pymongo==4.5.0
+
+# Environment and configuration
+python-dotenv==1.0.0
+
+# Data processing (should match main app versions)
+pandas==2.0.3
+numpy==1.24.3
+openpyxl==3.1.2

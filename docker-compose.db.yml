@@ -1,0 +1,54 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: icb_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password123
+      MYSQL_DATABASE: icb_db
+      MYSQL_USER: icb_user
+      MYSQL_PASSWORD: icb_password123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations/init_mysql.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    networks:
+      - icb_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password123"]
+      timeout: 20s
+      retries: 10
+      interval: 5s
+
+  mongodb:
+    image: mongo:6.0
+    container_name: icb_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root_password123
+      MONGO_INITDB_DATABASE: icb_ml
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./migrations/init_mongo.js:/docker-entrypoint-initdb.d/01_init.js:ro
+    networks:
+      - icb_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  mysql_data:
+    driver: local
+  mongo_data:
+    driver: local
+
+networks:
+  icb_network:
+    driver: bridge
