@@ -7,9 +7,9 @@ import os
 
 # Importar a classe
 try:
-    from classes.algotithms import AnalisadorCestaBasicaPro
+    from SupervisedExploration.classes.algorithms import AnalisadorCestaBasicaPro
 except ImportError:
-    st.error("Erro: Não foi possível encontrar o arquivo 'algotithms.py'. "
+    st.error("Erro: Não foi possível encontrar o arquivo 'algorthms.py'. "
              "Certifique-se de que ele está na pasta 'classes'.")
     st.stop()
 
