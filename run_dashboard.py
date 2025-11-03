@@ -18,20 +18,17 @@ def get_path(relative_path):
 
 if __name__ == "__main__":
     # 1. Encontra o caminho para o seu dashboard, que o PyInstaller
-    #    colocou dentro da pasta "SupervisedExploration"
     dashboard_file = get_path(os.path.join("SupervisedExploration", "dashboard.py"))
     
     # 2. Muda o diretório de trabalho atual para a pasta do dashboard.
-    #    Isso é CRUCIAL para que seu script encontre "./data" e "./classes"
     dashboard_dir = os.path.dirname(dashboard_file)
     os.chdir(dashboard_dir)
 
     # 3. Monta o comando "streamlit run ..." que será executado
-    #    O "--server.headless=true" é importante para o modo .exe
     sys.argv = [
         "streamlit",
         "run",
-        dashboard_file,  # Usa o caminho absoluto que encontramos
+        dashboard_file, 
         "--server.port=8501",
         "--server.headless=true" 
     ]
