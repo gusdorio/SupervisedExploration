@@ -13,11 +13,8 @@ RUN apt-get update && apt-get install -y \
 COPY ml_model/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy ml_model application files
+# Copy ml_model application files (this includes classes subdirectory)
 COPY ml_model/ ./ml_model/
-
-# Copy the classes directory (algorithms and datacleaner)
-COPY ml_model/classes/ ./classes/
 
 # Copy data directory
 COPY data/ ./data/

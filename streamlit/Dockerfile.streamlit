@@ -15,7 +15,7 @@ COPY streamlit/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy dashboard
-COPY dashboard.py .
+COPY streamlit/dashboard.py .
 
 # Copy the classes directory (algorithms)
 COPY ml_model/classes/ ./classes/

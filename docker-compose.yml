@@ -28,7 +28,7 @@ services:
     volumes:
       - ./data:/app/data:ro  # Read-only access to data
       - ./ml_model/classes:/app/classes:ro  # Read-only access to classes
-      - ./dashboard.py:/app/dashboard.py:ro  # Mount dashboard for hot-reload during development
+      - ./streamlit/dashboard.py:/app/dashboard.py:ro  # Mount dashboard for hot-reload during development
     networks:
       - app-network
     depends_on:
