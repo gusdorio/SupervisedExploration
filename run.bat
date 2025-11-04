@@ -37,13 +37,8 @@ if not exist "%REQUIREMENTS_FILE%" (
 )
 
 REM Garante que o pip esta atualizado e instala o PyInstaller e as dependencias
-if not exist ".venv" (
-    echo "Criando ambiente virtual (.venv)..."
-    python -m venv .venv
-)
-CALL .\.venv\Scripts\activate.bat
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\pip.exe install -r %REQUIREMENTS_FILE%
+python -m pip install --upgrade pip
+python -m pip install -r %REQUIREMENTS_FILE%
 
 REM Verifica se a instalacao falhou
 if %errorlevel% neq 0 (
@@ -57,7 +52,7 @@ echo " PASSO 2: Iniciando o dashboard"
 echo "=========================================================="
 
 echo "Para encerrar o dashboard, pressione Ctrl+C na janela do terminal que sera aberta."
-.venv\Scripts\streamlit.exe run dashboard.py
+python3 -m streamlit run dashboard.py
 
 REM Verifica se a compilacao falhou
 if %errorlevel% neq 0 (
@@ -106,7 +101,7 @@ cls
 echo "----------------------------------------------------------"
 echo " ERRO: Falha ao iniciar o dashboard"
 echo "----------------------------------------------------------"
-echo " Verifique a inicializacao do venv e as dependencias."
+echo " Verifique a inicializacao das dependencias."
 echo.
 pause
 exit /b
